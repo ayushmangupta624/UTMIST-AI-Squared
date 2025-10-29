@@ -474,8 +474,8 @@ def gen_reward_manager():
         'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=1.0)),
         'on_attack_reward':('attacked_signal', RewTerm(func = on_attack_reward , weight=1.5)),
         'on_dodge_reward':('dodged_signal', RewTerm(func = on_dodge_reward , weight=1)),
-        'on_taunt_reward': ('taunted_signal', RewTerm(func = taunted_signal, weight=1)),
-        'on_dash_award' : ('dashed_signal', RewTerm(func=dashed_signal, weight=1))
+        'on_taunt_reward': ('taunted_signal', RewTerm(func = on_taunt_reward, weight=1)),
+        'on_dash_award' : ('dashed_signal', RewTerm(func=on_dash_award, weight=1))
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
