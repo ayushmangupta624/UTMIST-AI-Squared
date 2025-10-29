@@ -867,6 +867,10 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
         self.knockout_signal = Signal(self)
         self.win_signal = Signal(self)
         self.hit_during_stun = Signal(self)
+
+        #later added
+        self.attacked_signal = Signal(self)# agent = "player" or "opponent"
+        self.dodged_signal = Signal (self)
         
         #kaden
         self.weapon_drop_signal = Signal(self)
@@ -2332,6 +2336,8 @@ class DodgeState(InAirState):
         # Override the body's velocity function to ignore gravity.
         self.p.body.velocity_func = DodgeState.no_gravity_velocity_func
         self.p.body.velocity = pymunk.Vec2d(0, 0)
+        self.p.env.dodged_signal.emit(agent='player' if self.p.agent_id == 0 else 'opponent')
+
 
 
     def physics_process(self, dt: float) -> PlayerObjectState:
@@ -2973,6 +2979,7 @@ class AttackState(PlayerObjectState):
         # load json Unarmed SLight.json
         #with open('Unarmed SLight.json') as f:
         #    move_data = json.load(f)
+        self.p.env.attacked_signal.emit(agent='player' if self.p.agent_id == 0 else 'opponent')
         if(self.p.weapon == "Spear" and hasattr(self.p.env, "spear_attacks")):
             move_data = self.p.env.spear_attacks[move_type] 
         elif(self.p.weapon == "Hammer" and hasattr(self.p.env, "hammer_attacks")):

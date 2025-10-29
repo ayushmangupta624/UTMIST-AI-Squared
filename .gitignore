@@ -4,10 +4,10 @@ __pycache__/
 *$py.class
 
 
-/assets/
-/assets/*
-/attacks/
-/attacks/*
+environment/assets/
+environment/assets/*
+environment/attacks/
+environment/attacks/*
 attacks.zip
 assets.zip
 .venv

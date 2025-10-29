@@ -82,6 +82,38 @@ class SB3Agent(Agent):
             log_interval=log_interval,
         )
 
+class EMARewardWrapper: # Thanks Perplexity, much kudos
+    """Applies exponential moving average smoothing to rewards"""
+    def __init__(self, alpha=0.1):
+        self.alpha = alpha  # EMA coefficient (0 < alpha < 1)
+        self.ema_reward = 0.0
+        
+    def update(self, reward):
+        self.ema_reward = (1 - self.alpha) * self.ema_reward + self.alpha * reward
+        return self.ema_reward
+
+class WoLFRewardTracker:# Thanks Perplexity, much kudos 2
+    """Tracks win/loss status for adaptive learning"""
+    def __init__(self, fast_lr=0.001, slow_lr=0.0003):
+        self.fast_lr = fast_lr
+        self.slow_lr = slow_lr
+        self.avg_reward = 0.0
+        self.current_reward = 0.0
+        self.episode_count = 0
+        
+    def update(self, episode_reward):
+        self.episode_count += 1
+        self.current_reward = episode_reward
+        self.avg_reward += (episode_reward - self.avg_reward) / self.episode_count
+        
+    def get_learning_rate(self,other):
+        # print(other, "debug get_learning_rate second argument")
+        # Learn fast when losing (below average)
+        if self.current_reward < self.avg_reward:
+            return self.fast_lr
+        # Learn slow when winning (above average)
+        return self.slow_lr
+
 class RecurrentPPOAgent(Agent):
     '''
     RecurrentPPOAgent:
@@ -94,13 +126,14 @@ class RecurrentPPOAgent(Agent):
         super().__init__(file_path)
         self.lstm_states = None
         self.episode_starts = np.ones((1,), dtype=bool)
+        # self.reward_ema = EMARewardWrapper(alpha=0.15)
 
     def _initialize(self) -> None:
         if self.file_path is None:
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
                 'lstm_hidden_size': 1024,
-                'net_arch': [dict(pi=[32, 32], vf=[32, 32])],
+                'net_arch': [dict(pi=[256, 128, 64], vf=[512, 256])],
                 'shared_lstm': False,
                 'enable_critic_lstm': True,
                 'share_features_extractor': True,
@@ -109,16 +142,16 @@ class RecurrentPPOAgent(Agent):
                 "MlpLstmPolicy",
                 self.env,
                 verbose=1,
-                n_steps= 30*90*20*30,
-                batch_size=1024,
-                n_epochs=60,
-                gamma=0.90,
-                ent_coef=0.03,
+                n_steps=30*90*20*30,      # More steps per rollout
+                batch_size=2048,           # Larger batches
+                n_epochs=80,               # More training epochs
+                gamma=0.94,                # Slightly higher discount
+                ent_coef=0.02,            # Lower entropy for exploitation
+                learning_rate=2.5e-4,     # Standard PPO learning rate
+                clip_range=0.2,           # PPO clip range
                 policy_kwargs=policy_kwargs,
-                device=torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Add this line
-                
+                device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
             )
-            del self.env
         else:
             self.model = RecurrentPPO.load(self.file_path, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))  # Add device here too
         # print(f"initialized with {self.device}")
@@ -126,6 +159,128 @@ class RecurrentPPOAgent(Agent):
         self.episode_starts = True
 
     def predict(self, obs):
+        action, self.lstm_states = self.model.predict(obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=False)
+        if self.episode_starts: self.episode_starts = False
+        return action
+
+    def save(self, file_path: str) -> None:
+        self.model.save(file_path)
+
+    def learn(self, env, total_timesteps, log_interval: int = 2, verbose=1):
+        print(f"timestamps: {total_timesteps}")
+        self.model.set_env(env)
+        self.model.verbose = verbose
+        self.model.learn(total_timesteps=total_timesteps, log_interval=log_interval)
+
+class EMARecurrentPPOAgent(Agent):
+    '''
+    RecurrentPPOAgent:
+    - Defines an RL Agent that uses the Recurrent PPO (LSTM+PPO) algorithm
+    '''
+    def __init__(
+            self,
+            file_path: Optional[str] = None
+    ):
+        super().__init__(file_path)
+        self.lstm_states = None
+        self.episode_starts = np.ones((1,), dtype=bool)
+        self.reward_ema = EMARewardWrapper(alpha=0.15)
+
+    def _initialize(self) -> None:
+        if self.file_path is None:
+            policy_kwargs = {
+                'activation_fn': nn.ReLU,
+                'lstm_hidden_size': 1024,
+                'net_arch': [dict(pi=[256, 128, 64], vf=[512, 256])],
+                'shared_lstm': False,
+                'enable_critic_lstm': True,
+                'share_features_extractor': True,
+            }
+            self.model = RecurrentPPO(
+                "MlpLstmPolicy",
+                self.env,
+                verbose=1,
+                n_steps=30*90*20*30,      # More steps per rollout
+                batch_size=2048,           # Larger batches
+                n_epochs=80,               # More training epochs
+                gamma=0.97,                # Slightly higher discount
+                ent_coef=0.02,            # Lower entropy for exploitation
+                learning_rate=2.5e-4,     # Standard PPO learning rate
+                clip_range=0.2,           # PPO clip range
+                policy_kwargs=policy_kwargs,
+                device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            )
+        else:
+            self.model = RecurrentPPO.load(self.file_path, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))  # Add device here too
+        # print(f"initialized with {self.device}")
+    def reset(self) -> None:
+        self.episode_starts = True
+
+    def predict(self, obs):
+        action, self.lstm_states = self.model.predict(obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=False)
+        if self.episode_starts: self.episode_starts = False
+        return action
+
+    def save(self, file_path: str) -> None:
+        self.model.save(file_path)
+
+    def learn(self, env, total_timesteps, log_interval: int = 2, verbose=1):
+        print(f"timestamps: {total_timesteps}")
+        self.model.set_env(env)
+        self.model.verbose = verbose
+        self.model.learn(total_timesteps=total_timesteps, log_interval=log_interval)
+
+class WoLFEMARecurrentPPOAgent(Agent):
+    '''
+    RecurrentPPOAgent:
+    - Defines an RL Agent that uses the Recurrent PPO (LSTM+PPO) algorithm
+    '''
+    def __init__(
+            self,
+            file_path: Optional[str] = None
+
+    ):
+
+        super().__init__(file_path)
+        self.lstm_states = None
+        self.episode_starts = np.ones((1,), dtype=bool)
+        self.reward_ema = EMARewardWrapper(alpha=0.11) # Note that it still has 
+
+    def _initialize(self) -> None:
+        # print(self.env.__dict__)
+        if self.file_path is None:
+            self.wolf_tracker = WoLFRewardTracker(fast_lr=0.0005, slow_lr=0.0001)
+            policy_kwargs = {
+                'activation_fn': nn.ReLU,
+                'lstm_hidden_size': 1024,
+                'net_arch': [dict(pi=[256, 128, 64], vf=[512, 256])],
+                'shared_lstm': False,
+                'enable_critic_lstm': True,
+                'share_features_extractor': True,
+            }
+            self.model = RecurrentPPO(
+                "MlpLstmPolicy",
+                self.env,
+                verbose=1,
+                n_steps=30*90*20*30,      # More steps per rollout
+                batch_size=2048,           # Larger batches
+                n_epochs=80,               # More training epochs
+                gamma=0.97,                # Slightly higher discount
+                ent_coef=0.02,            # Lower entropy for exploitation
+                learning_rate=self.wolf_tracker.get_learning_rate,
+                clip_range=0.2,           # PPO clip range
+                policy_kwargs=policy_kwargs,
+                device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            )
+        else:
+            self.model = RecurrentPPO.load(self.file_path, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))  # Add device here too
+        # print(f"initialized with {self.device}")
+    
+    def reset(self) -> None:
+        self.episode_starts = True
+
+    def predict(self, obs):
+        # print(env.player_state, "player_state debug")
         action, self.lstm_states = self.model.predict(obs, state=self.lstm_states, episode_start=self.episode_starts, deterministic=False)
         if self.episode_starts: self.episode_starts = False
         return action
@@ -243,10 +398,10 @@ class ClockworkAgent(Agent):
 
         if action_sheet is None:
             self.action_sheet = [
-                (10, ['a']),
+                (1, ['a']),
                 (1, ['l']),
-                (20, ['a']),
-                (3, ['a', 'j']),
+                (2, ['d']),
+                (1, ['a', 'j']),
                 (15, ['space']),
             ]
         else:
@@ -299,47 +454,109 @@ class RewardMode(Enum):
     SYMMETRIC = 1
     ASYMMETRIC_DEFENSIVE = 2
 
+
 def damage_interaction_reward(
     env: WarehouseBrawl,
     mode: RewardMode = RewardMode.SYMMETRIC,
+    alpha: float = 0.2,  # Momentum coefficient for EMA smoothing
 ) -> float:
     """
-    Computes the reward based on damage interactions between players.
-
+    Damage reward with momentum smoothing to reduce variance.
+    
+    Combines damage interaction modes with exponential moving average smoothing
+    to create more stable reward signals during training.
+    
     Modes:
-    - ASYMMETRIC_OFFENSIVE (0): Reward is based only on damage dealt to the opponent
-    - SYMMETRIC (1): Reward is based on both dealing damage to the opponent and avoiding damage
-    - ASYMMETRIC_DEFENSIVE (2): Reward is based only on avoiding damage
+    - ASYMMETRIC_OFFENSIVE (0): Reward based only on damage dealt to opponent
+    - SYMMETRIC (1): Reward based on both dealing damage and avoiding damage
+    - ASYMMETRIC_DEFENSIVE (2): Reward based only on avoiding damage
+    
+    Args:
+        env (WarehouseBrawl): The game environment
+        mode (RewardMode): Reward mode for damage calculation
+        alpha (float): EMA smoothing coefficient (0 < alpha < 1)
+                      Higher values = less smoothing, more responsive
+                      Lower values = more smoothing, more stable
+    
+    Returns:
+        float: The smoothed reward value
+    """
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+    
+    # Initialize momentum storage if not exists
+    if not hasattr(player, '_damage_momentum'):
+        player._damage_momentum = 0.0
+        opponent._damage_momentum = 0.0
+    
+    # Get current frame damage values
+    damage_taken = player.damage_taken_this_frame
+    damage_dealt = opponent.damage_taken_this_frame
+    
+    # Compute raw damage differential based on mode
+    if mode == RewardMode.ASYMMETRIC_OFFENSIVE:
+        damage_diff = damage_dealt * 1.5
+    elif mode == RewardMode.SYMMETRIC:
+        damage_diff = damage_dealt - damage_taken
+    elif mode == RewardMode.ASYMMETRIC_DEFENSIVE:
+        damage_diff = -damage_taken
+    else:
+        raise ValueError(f"Invalid mode: {mode}")
+    
+    # Apply EMA smoothing to reduce variance
+    smoothed_reward = (
+        alpha * damage_diff + 
+        (1 - alpha) * player._damage_momentum
+    )
+    
+    # Update momentum for next frame
+    player._damage_momentum = smoothed_reward
+    
+    # Scale reward to reasonable range
+    return (smoothed_reward) / 70
+
+def going_to_spawner_award(env):
+    """
+    Computes the reward based on whether the agent is moving toward the pickup spawner.
+    The reward is calculated by taking the dot product of the agent's normalized velocity
+    with the normalized direction vector toward the closest spawner.
 
     Args:
         env (WarehouseBrawl): The game environment
-        mode (DamageRewardMode): Reward mode, one of DamageRewardMode
 
     Returns:
-        float: The computed reward.
+        float: The computed reward
     """
-    # Getting player and opponent from the enviornment
+    # Getting agent and opponent from the enviornment
     player: Player = env.objects["player"]
-    opponent: Player = env.objects["opponent"]
+    spawners = env.get_spawner_info()
 
-    # Reward dependent on the mode
-    damage_taken = player.damage_taken_this_frame
-    damage_dealt = opponent.damage_taken_this_frame
+    # Extracting player velocity and position from environment
+    if spawners ==[] or env.objects["player"].weapon != "Punch":return
 
-    if mode == RewardMode.ASYMMETRIC_OFFENSIVE:
-        reward = damage_dealt * 1.5
-    elif mode == RewardMode.SYMMETRIC:
-        reward = damage_dealt - damage_taken
-    elif mode == RewardMode.ASYMMETRIC_DEFENSIVE:
-        reward = -damage_taken
-    else:
-        raise ValueError(f"Invalid mode: {mode}")
-    reward *= 50
-    return reward / 140
+    closest_spawner = None
+    closest_distance = 9999999999
+    for i in spawners:
+        if closest_distance > np.linalg.norm(player.body.location - i):
+            closest_spawner = i
 
+    player_position_dif = np.array([player.body.velocity.x * env.dt, player.body.velocity.y * env.dt])
 
-# In[ ]:
+    direction_to_spawner = np.array([closest_spawner[0] - player.body.position.x,
+                                      closest_spawner[1] - player.body.position.y])
 
+    # Prevent division by zero or extremely small values
+    direc_to_spawner_norm = np.linalg.norm(direction_to_spawner)
+    player_pos_dif_norm = np.linalg.norm(player_position_dif)
+
+    if direc_to_spawner_norm < 1e-6 or player_pos_dif_norm < 1e-6:
+        return 0.0
+
+    # Compute the dot product of the normalized vectors to figure out how much
+    # current movement (aka velocity) is in alignment with the direction they need to go in
+    reward = np.dot(player_position_dif / direc_to_spawner_norm, direction_to_spawner / direc_to_spawner_norm)
+
+    return reward if reward is not None else 0
 
 def danger_zone_reward(
     env: WarehouseBrawl,
@@ -361,9 +578,9 @@ def danger_zone_reward(
     player: Player = env.objects["player"]
 
     # Apply penalty if the player is in the danger zone
-    reward = -zone_penalty if player.body.position.y >= zone_height else 0.0
+    reward = -zone_penalty  if player.body.position.y >= zone_height else 0.0
 
-    return reward * env.dt * 3
+    return reward * env.dt  if reward is not None else 0
 
 def in_state_reward(
     env: WarehouseBrawl,
@@ -386,13 +603,13 @@ def in_state_reward(
     # Apply penalty if the player is in the danger zone
     reward = 1 if isinstance(player.state, desired_state) else 0.0
 
-    return reward * env.dt
+    return reward * env.dt  if reward is not None else 0
 
 
 def edge_penalty_reward( # gemini helped reward function
     env: WarehouseBrawl,
-    edge_penalty: int = 10,
-    edge_boundary: float = 10.67 / 2
+    edge_penalty: int = 1,
+    edge_boundary: float = 10.73 / 2
 ) -> float:
     """
     Applies a penalty for every time frame the player is beyond the 
@@ -421,11 +638,52 @@ def edge_penalty_reward( # gemini helped reward function
 
     # Apply penalty if the player is off the edge
     is_off_edge = pos_x > edge_boundary or pos_x < -edge_boundary
-    reward = -edge_penalty if is_off_edge else 0.0
+    reward = -edge_penalty * 20 if is_off_edge else 1 # idk if well need to adjust for the middle edge. 
 
-    return reward * env.dt
+    return reward * env.dt  if reward is not None else 0
 
-def head_to_middle_reward(
+def recovery_positioning_reward( # kudos perplexity
+    env: WarehouseBrawl,
+) -> float:
+    """
+    Rewards player for moving toward stage center when off-stage or in danger.
+    Encourages survival behavior when stocks are low.
+    """
+    player: Player = env.objects["player"]
+    
+    # Check if player is in danger (high or off-stage)
+    pos_x = player.body.position.x
+    pos_y = player.body.position.y
+    
+    edge_boundary = 10.73 / 2
+    danger_height = 4.2
+    
+    is_in_danger = (abs(pos_x) > edge_boundary * 0.7) or (pos_y > danger_height * 0.7)
+    
+    if not is_in_danger:
+        return 0.0
+    
+    # Reward moving toward center (0, 0)
+    vel_x = player.body.velocity.x
+    vel_y = player.body.velocity.y
+    
+    # Direction to center
+    direction_x = -np.sign(pos_x) if abs(pos_x) > 0.1 else 0
+    direction_y = -1 if pos_y > 0 else 0  # Move down toward stage
+    
+    # Reward velocity aligned with recovery direction
+    recovery_alignment = vel_x * direction_x + vel_y * direction_y
+    
+    # Scale by stock disadvantage
+    try:
+        stock_multiplier = 2.0 if player.stocks <= 1 else 1.0
+    except:
+        stock_multiplier = 1.0
+    
+    return max(0, recovery_alignment) * env.dt * stock_multiplier * 5.0  if recovery_alignment is not None  and stock_multiplier is not None else 0
+
+
+def head_to_middle_reward( # we don't need thisshi
     env: WarehouseBrawl,
 ) -> float:
     """
@@ -446,21 +704,57 @@ def head_to_middle_reward(
     multiplier = -1 if player.body.position.x > 0 else 1
     reward = multiplier * (player.body.position.x - player.prev_x)
 
-    return reward
+    return reward * 0   if reward is not None else 0#remove if you want the middle award back
 
-def head_to_opponent(
+def having_weapon_reward(env) -> float:
+    player: Player = env.objects["player"]
+    if env.objects["player"].weapon == "Punch":
+        return -25 * env.dt
+    else: 
+        return 10 * env.dt
+
+player_prev_position = None
+def move_to_opponent_reward(
     env: WarehouseBrawl,
 ) -> float:
+    """
+    Computes the reward based on whether the agent is moving toward the opponent.
+    The reward is calculated by taking the dot product of the agent's normalized velocity
+    with the normalized direction vector toward the opponent.
 
-    # Get player object from the environment
+    Args:
+        env (WarehouseBrawl): The game environment
+
+    Returns:
+        float: The computed reward
+    """
+
+    #variable names in this function is kinda hard to understand but I hope the math works. 
+
+    # Getting agent and opponent from the enviornment
     player: Player = env.objects["player"]
     opponent: Player = env.objects["opponent"]
+    # Extracting player velocity and position from environment
+    player_position_dif = np.array([player.body.velocity.x * env.dt, player.body.velocity.y * env.dt])
 
-    # Apply penalty if the player is in the danger zone
-    multiplier = -2 if player.body.position.x > opponent.body.position.x else 2
-    reward = multiplier * (player.body.position.x - player.prev_x)
+    direction_to_opponent = np.array([opponent.body.position.x - player.body.position.x,
+                                      opponent.body.position.y - player.body.position.y])
 
-    return reward * 10
+    # Prevent division by zero or extremely small values
+    direc_to_opp_norm = np.linalg.norm(direction_to_opponent)
+    player_pos_dif_norm = np.linalg.norm(player_position_dif)
+
+    if direc_to_opp_norm < 1e-6 or player_pos_dif_norm < 1e-6:
+        return 0.0
+
+    # Compute the dot product of the normalized vectors to figure out how much
+    # current movement (aka velocity) is in alignment with the direction they need to go in
+    if env.objects["player"].weapon != "Punch": # This if statement ensures that the the agent will escape the enemy and will chase if it has a weapon.
+        reward = np.dot(player_position_dif / direc_to_opp_norm, direction_to_opponent / direc_to_opp_norm)
+    else:
+        reward = -0.1*np.dot(player_position_dif / direc_to_opp_norm, direction_to_opponent / direc_to_opp_norm)
+
+    return reward  if reward is not None else 0
 
 def holding_more_than_3_keys(
     env: WarehouseBrawl,
@@ -471,22 +765,25 @@ def holding_more_than_3_keys(
 
     # Apply penalty if the player is holding more than 3 keys
     a = player.cur_action
+    # print(a," debug of action list")
     if (a > 0.5).sum() > 3:
-        return env.dt * 3
-    return 0
+        return env.dt * 7
+    return 0 
+
+
 
 def on_win_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == 'player':
-        return 300
+        return 600
     else:
-        return -200
+        return -1000
 
 def on_knockout_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == 'player':
-        return -100
+        return -200
     else:
         return 150
-    
+
 def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == "player":
         if env.objects["player"].weapon == "Hammer":
@@ -498,35 +795,97 @@ def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
 def on_drop_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == "player":
         if env.objects["player"].weapon == "Punch":
-            return -50
+            return -300
     return 0.0
 
 def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == 'player':
-        return -50.0
+        return -25.0
     else:
         return 100.0
 
+def on_attack_reward(env:WarehouseBrawl, agent:str):
+    """This functions gets called if the player attacks, it assets whether the player is close to the enemy while attacking so it isn't swinging punches to thin air and stuff. """
+    if agent != 'player': return 0
+
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+
+    difvector = np.array([opponent.body.position.x - player.body.position.x,
+                                        opponent.body.position.y - player.body.position.y])
+
+    # Prevent division by zero or extremely small values
+    distance = np.linalg.norm(difvector)
+    #calculate the distance between the player and the opp, then 
+    if distance <= 1:
+        val = ((distance-0.5)*6)**3 + 25
+        val *= (1/opponent.stocks)*30
+    elif 1< distance <= 1.6:
+        val = 0 
+    else:
+        val = -math.log(distance-0.6)*5
+    
+    if env.objects["player"].weapon == "Punch":
+        val -= 5
+    
+    return val   if val is not None else 0
+
+
+
+def on_dodge_reward(env:WarehouseBrawl, agent:str):
+    """This function gets called when the opponent attacks, if the agent manages to time a dodge right, they get a big reward. However, this also makes it so the agent doesn't just dodge when its far away."""
+    if agent != 'opponent':return 0
+
+    
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+    
+
+    difvector = np.array([opponent.body.position.x - player.body.position.x,
+                                        opponent.body.position.y - player.body.position.y])
+
+    # Prevent division by zero or extremely small values
+    distance = np.linalg.norm(difvector)
+    #calculate the distance between the player and the opp, then 
+    if env.objects["opponent"].state == env.objects["opponent"].states_types['attack']:
+        if distance <= 1:
+            val = ((distance-0.5)*6)**3 + 35
+        elif 1< distance <= 1.6:
+            val = 10
+    else: 
+        if distance <= 1:
+            val = (((distance-0.5)*6)**3 + 25)/3
+        else:
+            val = 0
+
+        
+    return val * (1/player.stocks)*30  if val is not None else 0
+
+#TODO: a functinon that rewards for edgeguarding and platform camping. 
 '''
 Add your dictionary of RewardFunctions here using RewTerms
 '''
 def gen_reward_manager(): 
     reward_functions = {
-        #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.8),
+        'target_height_reward': RewTerm(func=base_height_l2, weight=0.1, params={'target_height': -4, 'obj_name': 'player'}),
+        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=80),
         'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=3),
+        'having_weapon_reward' : RewTerm(func = having_weapon_reward, weight = 2),
         #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
-        'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.7),
-        'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
-        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.03),
+        'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=0.7),
+        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.1),
+        'edge_penalty_reward' : RewTerm(func=edge_penalty_reward, weight = 1),
+        'recovery_positioning_reward' : RewTerm(func=recovery_positioning_reward, weight =0.4)
         #'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}), #TODO: add emote after knowckout of opponent if safe etc etc
     }
     signal_subscriptions = {
-        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=60)),
+        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=10)),
         'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=10)),
-        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=5)),
-        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=15)),
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=20))
+        'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=4)),
+        'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=6)),
+        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=5)),
+        'on_attack_reward':('attacked_signal', RewTerm(func = on_attack_reward , weight=10)),
+        'on_dodge_reward':('dodged_signal', RewTerm(func = on_dodge_reward , weight=6)),
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
@@ -537,45 +896,100 @@ def gen_reward_manager():
 The main function runs training. You can change configurations such as the Agent type or opponent specifications here.
 '''
 if __name__ == '__main__':
-    # Create agent
-    # Start here if you want to train from scratch. e.g:
-    my_agent = RecurrentPPOAgent()
 
-    # Start here if you want to train from a specific timestep. e.g:
-    # my_agent = RecurrentPPOAgent(file_path=r'checkpoints/training_1_26thlater/rl_model_13226977_steps.zip')
+    mode = input("single or multiple? >>>")
+    assert mode in ["single","multiple"]
 
-    # Reward manager
-    reward_manager = gen_reward_manager()
-    # Self-play settings
-    selfplay_handler = SelfPlayRandom(
-        partial(type(my_agent)), # Agent class and its keyword arguments
-                                 # type(my_agent) = Agent class
-    )
+    if mode == "single":
+        # Create agent
+        # Start here if you want to train from scratch. e.g:
+        my_agent = WoLFEMARecurrentPPOAgent()
 
-    # Set save settings here:
-    save_handler = SaveHandler(
-        agent=my_agent, # Agent to save
-        save_freq=100_000, # Save frequency
-        max_saved=100, # Maximum number of saved models
-        save_path='checkpoints', # Save path
-        run_name='training_28th',
-        mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
-    )
+        # Start here if you want to train from a specific timestep. e.g:
+        # my_agent = RecurrentPPOAgent(file_path=r'checkpoints/training_1_26thlater/rl_model_13226977_steps.zip')
 
-    # Set opponent settings here:
-    opponent_specification = {
-                    'self_play': (10, selfplay_handler),
-                    'constant_agent': (6, partial(ConstantAgent)),
-                    'based_agent': (3, partial(BasedAgent)),
-                    'clockwise_agent': (4, partial(BasedAgent)),
-                }
-    opponent_cfg = OpponentsCfg(opponents=opponent_specification)
+        # Reward manager
+        reward_manager = gen_reward_manager()
+        # Self-play settings
+        selfplay_handler = SelfPlayRandom(
+            partial(type(my_agent)), # Agent class and its keyword arguments
+                                    # type(my_agent) = Agent class
+        )
 
-    train(my_agent,
-        reward_manager,
-        save_handler,
-        opponent_cfg,
-        CameraResolution.LOW,
-        train_timesteps=1_000_000_000,
-        train_logging=TrainLogging.PLOT,
-    )
+        # Set save settings here:
+        save_handler = SaveHandler(
+            agent=my_agent, # Agent to save
+            save_freq=100_000, # Save frequency
+            max_saved=100, # Maximum number of saved models
+            save_path='checkpoints', # Save path
+            run_name='training_28th',
+            mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
+        )
+
+        # Set opponent settings here:
+        opponent_specification = {
+                        'self_play': (6, selfplay_handler),
+                        'constant_agent': (10, partial(ConstantAgent)),
+                        'based_agent': (3, partial(BasedAgent)),
+                        'clockwise_agent': (4, partial(BasedAgent)),
+                    }
+        opponent_cfg = OpponentsCfg(opponents=opponent_specification)
+
+        train(my_agent,
+            reward_manager,
+            save_handler,
+            opponent_cfg,
+            CameraResolution.LOW,
+            train_timesteps=1_000_000_000,
+            train_logging=TrainLogging.PLOT,
+        )
+    else:
+        multiple_agent_classes= [RecurrentPPOAgent, EMARecurrentPPOAgent, WoLFEMARecurrentPPOAgent]
+        for agentclass in multiple_agent_classes:
+            try:
+                        # Create agent
+                # Start here if you want to train from scratch. e.g:
+                my_agent = agentclass()
+
+                # Start here if you want to train from a specific timestep. e.g:
+                # my_agent = RecurrentPPOAgent(file_path=r'checkpoints/training_1_26thlater/rl_model_13226977_steps.zip')
+
+                # Reward manager
+                reward_manager = gen_reward_manager()
+                # Self-play settings
+                selfplay_handler = SelfPlayRandom(
+                    partial(type(my_agent)), # Agent class and its keyword arguments
+                                            # type(my_agent) = Agent class
+                )
+
+                # Set save settings here:
+                save_handler = SaveHandler(
+                    agent=my_agent, # Agent to save
+                    save_freq=100_000, # Save frequency
+                    max_saved=1000, # Maximum number of saved models
+                    save_path='checkpoints', # Save path
+                    run_name=f'{agentclass.__name__}_{__import__("datetime.datetime").today().strftime("%Y-%m-%d %H:%M:%S")}',
+                    mode=SaveHandlerMode.FORCE # Save mode, FORCE or RESUME
+                )
+
+                # Set opponent settings here:
+                opponent_specification = {
+                                'self_play': (6, selfplay_handler),
+                                'constant_agent': (10, partial(ConstantAgent)),
+                                'Based_agent': (4, partial(BasedAgent)),
+                                'ClockworkAgent': (3, partial(ClockworkAgent)),
+                            }
+                opponent_cfg = OpponentsCfg(opponents=opponent_specification)
+
+                train(my_agent,
+                    reward_manager,
+                    save_handler,
+                    opponent_cfg,
+                    CameraResolution.LOW,
+                    train_timesteps=2_000_000_000,
+                    train_logging=TrainLogging.PLOT,
+                )
+            except Exception as e:
+                print("Error occurred:", e)
+                with open(f"errors/f'{agentclass.__name__}_{__import__('datetime.datetime').today().strftime('%Y-%m-%d %H:%M:%S')}",w) as file:
+                    file.write(str(e))

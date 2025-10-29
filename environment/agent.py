@@ -212,7 +212,11 @@ class RewardManager():
 
     def _signal_func(self, term_cfg: RewTerm, *args, **kwargs):
         term_partial = partial(term_cfg.func, **term_cfg.params)
-        self.collected_signal_rewards += term_partial(*args, **kwargs) * term_cfg.weight
+        try: 
+            self.collected_signal_rewards += term_partial(*args, **kwargs) * term_cfg.weight
+        except Exception as e:
+            print("DEBUG ERROR AT SIGNAL VALUE SUMMATION",RewTerm.__dict__, e)# 4 am clutch code
+            self.collected_signal_rewards += 0
 
     def process(self, env, dt) -> float:
         # reset computation
@@ -237,7 +241,7 @@ class RewardManager():
         log['reward'] = f'{reward_buffer:.3f}'
         log['total_reward'] = f'{self.total_reward:.3f}'
         env.logger[0] = log
-        return reward
+        return reward if reward is not None else 0
 
     def reset(self):
         self.total_reward = 0
