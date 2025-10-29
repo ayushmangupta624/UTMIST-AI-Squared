@@ -474,7 +474,7 @@ if __name__ == '__main__':
               train_logging=TrainLogging.PLOT,
         )
     else:
-        multiple_agent_classes= [RecurrentPPOAgent, EMARecurrentPPOAgent, WoLFEMARecurrentPPOAgent]
+        multiple_agent_classes= [WoLFEMARecurrentPPOAgent, EMARecurrentPPOAgent, RecurrentPPOAgent ]
         for agentclass in multiple_agent_classes:
             try:
                 my_agent = agentclass()
@@ -482,10 +482,10 @@ if __name__ == '__main__':
                 selfplay_handler = SelfPlayRandom(partial(type(my_agent)))
                 save_handler = SaveHandler(
                     agent=my_agent,
-                    save_freq=100_000,
+                    save_freq=25_000,
                     max_saved=1000,
                     save_path='checkpoints',
-                    run_name=f'{agentclass.__name__}_{__import__("datetime.datetime").today().strftime("%Y-%m-%d %H:%M:%S")}',
+                    run_name=f'{agentclass.__name__}_{__import__("datetime").datetime.today().strftime("%Y-%m-%d-%H-%M-%S")}',
                     mode=SaveHandlerMode.FORCE
                 )
                 opponent_specification = {
@@ -501,10 +501,10 @@ if __name__ == '__main__':
                       save_handler,
                       opponent_cfg,
                       CameraResolution.LOW,
-                      train_timesteps=2_000_000,
+                      train_timesteps=1_000_000,
                       train_logging=TrainLogging.PLOT,
                 )
             except Exception as e:
                 print("Error occurred:", e)
-                with open(f"errors/{agentclass.__name__}_{__import__('datetime.datetime').today().strftime('%Y-%m-%d %H:%M:%S')}", 'w') as file:
+                with open(f"errors/{agentclass.__name__}_{__import__('datetime').datetime.today().strftime('%Y-%m-%d-%H-%M-%S')}", 'w') as file:
                     file.write(str(e))
