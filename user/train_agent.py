@@ -66,7 +66,7 @@ class RecurrentPPOAgent(Agent):
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
                 'lstm_hidden_size': 256,
-                'net_arch': [dict(pi=[128, 128], vf=[128, 128])],
+                'net_arch': [dict(pi=[1024, 512, 512, 1024], vf=[1024, 512, 512, 1024])],
                 'shared_lstm': False,
                 'enable_critic_lstm': True,
                 'share_features_extractor': True,
@@ -145,7 +145,7 @@ class WoLFEMARecurrentPPOAgent(RecurrentPPOAgent):
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
                 'lstm_hidden_size': 256,
-                'net_arch': [dict(pi=[128, 128], vf=[128, 128])],
+                'net_arch': [dict(pi=[1024, 512, 512, 1024], vf=[1024, 512, 512, 1024])],
                 'shared_lstm': False,
                 'enable_critic_lstm': True,
                 'share_features_extractor': True,
