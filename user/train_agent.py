@@ -254,7 +254,7 @@ class ClockworkAgent(Agent):
 # ----------------------------- REWARD FUNCTIONS -----------------------------
 
 
-def staying_alive_reward(env:WarehouseBrawl, agent:str) -> float:
+def staying_alive_reward(env:WarehouseBrawl) -> float:
     return 1/env.dt
 
 def base_height_l2(env: WarehouseBrawl, target_height: float, obj_name: str = 'player') -> float:
@@ -342,6 +342,7 @@ def recovery_positioning_reward(env: WarehouseBrawl) -> float:
 def recovery_actions_award(env: WarehouseBrawl) -> float:
     """This reward function applies a penalty if the agent tries to attack, or do somehting else during faling."""
     player: Player = env.objects["player"]
+    opponent : Player = env.objects["opponent"]
     pos_x = player.body.position.x
     pos_y = player.body.position.y
     edge_boundary = 10.73 / 2
@@ -350,7 +351,7 @@ def recovery_actions_award(env: WarehouseBrawl) -> float:
 
     if not is_in_danger:return 0
 
-    if player.state in [player.states_types[i] for i in ["dodge","attack","dash","taunt"]]:
+    if player.state in [opponent.states_types.get("dodge"),opponent.states_types.get("attack"),opponent.states_types.get("dash"),opponent.states_types.get("taunt")]:
         return -20 * env.dt
     else:
         return 1 * env.dt
@@ -398,6 +399,7 @@ def on_drop_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == "player":
         # if env.objects["player"].weapon == "Punch":
         return -20.0
+    return 0
 
 def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
     return 5.0 if agent == 'opponent' else -5.0
@@ -437,7 +439,7 @@ def on_dodge_reward(env:WarehouseBrawl, agent:str) -> float:
 def on_taunt_reward(env:WarehouseBrawl, agent:str) -> float:
     """penaltize for taunting, give out a big reward if taunted during opponent knockout"""
     if agent == "player":
-        if env.opponent.state == env.opponent.state_types["KO"]:
+        if env.objects["opponent"].state == env.objects["opponent"].states_types.get("KO"):
             return 10
         return -5
     return 0
@@ -494,7 +496,7 @@ if __name__ == '__main__':
             save_freq=100_000,
             max_saved=1000,
             save_path='checkpoints',
-            run_name=f'{my_agent.__name__}_{__import__("datetime").datetime.today().strftime("%Y-%m-%d-%H-%M-%S")}',
+            run_name=f'{"WoLF"}_{__import__("datetime").datetime.today().strftime("%Y-%m-%d-%H-%M-%S")}',
             mode=SaveHandlerMode.FORCE
         )
         opponent_specification = {
