@@ -871,6 +871,8 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
         #later added
         self.attacked_signal = Signal(self)# agent = "player" or "opponent"
         self.dodged_signal = Signal (self)
+        self.taunted_signal = Signal (self)
+        self.dashed_signal = Signal(self)
         
         #kaden
         self.weapon_drop_signal = Signal(self)
@@ -1955,6 +1957,7 @@ class TauntState(InAirState):
     def enter(self) -> None:
         self.taunt_timer = self.p.taunt_time
         self.seed = random.randint(0, 2)
+        self.p.env.taunted_signal.emit(agent='player' if self.p.agent_id == 0 else 'opponent')
 
 
     def physics_process(self, dt: float) -> PlayerObjectState:
@@ -2265,6 +2268,7 @@ class KOState(GroundState):
 class DashState(GroundState):
     def enter(self) -> None:
         self.dash_timer = self.p.dash_time
+        self.p.env.dashed_signal.emit(agent='player' if self.p.agent_id == 0 else 'opponent')
         # Optionally, play a dash sound or animation here.
 
     def physics_process(self, dt: float) -> PlayerObjectState:
@@ -2290,6 +2294,7 @@ class BackDashState(GroundState):
 
     def enter(self) -> None:
         self.backdash_timer = self.p.backdash_time
+        self.p.env.dashed_signal.emit(agent='player' if self.p.agent_id == 0 else 'opponent')
         # Backdash is usually slower than a forward dash.
 
     def physics_process(self, dt: float) -> PlayerObjectState:

@@ -5,7 +5,7 @@ from user.my_agent import SubmittedAgent
 import pygame
 pygame.init()
 
-my_agent = UserInputAgent()
+my_agent = SubmittedAgent("checkpoints/EMARecurrentPPOAgent_2025-10-29-05-35-12/rl_model_1001070_steps.zip")
 
 #Input your file path here in SubmittedAgent if you are loading a model:
 opponent = SubmittedAgent("checkpoints/EMARecurrentPPOAgent_2025-10-29-05-35-12/rl_model_1001070_steps.zip")
