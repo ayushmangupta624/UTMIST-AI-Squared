@@ -535,7 +535,7 @@ class Camera():
     pos: list[int] = [0,0]
     zoom: float = 2.0
 
-    def scale_background(self, env, bg_image: pygame.image = pygame.image.load('environment/assets/map/background.png')) -> None:
+    def scale_background(self, env, bg_image: pygame.image = pygame.image.load('environment/assets/map/bg.jpg')) -> None:
         resolution: Tuple[int] = env.resolution
         window_height, window_width = self.resolutions[resolution]
 

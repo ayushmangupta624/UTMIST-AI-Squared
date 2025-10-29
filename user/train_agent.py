@@ -25,13 +25,13 @@ class SB3Agent(Agent):
                 "MlpPolicy",
                 self.env,
                 verbose=1,
-                n_steps=2048,
-                batch_size=256,
-                n_epochs=10,
+                n_steps=4086,
+                batch_size=512,
+                n_epochs=20,
                 learning_rate=3e-4,
-                gamma=0.99,
+                gamma=0.93,
                 ent_coef=0.01,
-                clip_range=0.2,
+                clip_range=0.25,
                 device=device,
             )
             del self.env
@@ -65,7 +65,7 @@ class RecurrentPPOAgent(Agent):
         if self.file_path is None:
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
-                'lstm_hidden_size': 256,
+                'lstm_hidden_size': 512,
                 'net_arch': [dict(pi=[1024, 512, 512, 1024], vf=[1024, 512, 512, 1024])],
                 'shared_lstm': False,
                 'enable_critic_lstm': True,
@@ -75,13 +75,13 @@ class RecurrentPPOAgent(Agent):
                 "MlpLstmPolicy",
                 self.env,
                 verbose=1,
-                n_steps=2048,
-                batch_size=256,
-                n_epochs=10,
-                gamma=0.99,
+                n_steps=4086,
+                batch_size=512,
+                n_epochs=20,
+                gamma=0.93,
                 ent_coef=0.01,
                 learning_rate=3e-4,
-                clip_range=0.2,
+                clip_range=0.25,
                 policy_kwargs=policy_kwargs,
                 device=device
             )
@@ -144,7 +144,7 @@ class WoLFEMARecurrentPPOAgent(RecurrentPPOAgent):
         if self.file_path is None:
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
-                'lstm_hidden_size': 256,
+                'lstm_hidden_size': 512,
                 'net_arch': [dict(pi=[1024, 512, 512, 1024], vf=[1024, 512, 512, 1024])],
                 'shared_lstm': False,
                 'enable_critic_lstm': True,
@@ -154,13 +154,13 @@ class WoLFEMARecurrentPPOAgent(RecurrentPPOAgent):
                 "MlpLstmPolicy",
                 self.env,
                 verbose=1,
-                n_steps=2048,
-                batch_size=256,
-                n_epochs=10,
-                gamma=0.99,
+                n_steps=4086,
+                batch_size=512,
+                n_epochs=20,
+                gamma=0.93,
                 ent_coef=0.01,
                 learning_rate=self._get_learning_rate,
-                clip_range=0.2,
+                clip_range=0.25,
                 policy_kwargs=policy_kwargs,
                 device=device
             )
@@ -391,11 +391,11 @@ def on_attack_reward(env:WarehouseBrawl, agent:str) -> float:
     dif = np.array([opponent.body.position.x - player.body.position.x, opponent.body.position.y - player.body.position.y])
     dist = np.linalg.norm(dif)
     if dist <= 1.0:
-        val = 8.0
+        return -((dist - 0.5) * 3.2)**3 + 4
     elif dist <= 1.6:
-        val = 1.0
+        val = 0
     else:
-        val = -2.0
+        val = -math.log(dist-1.6)
     if player.weapon == "Punch":
         val -= 1.0
     return val
@@ -409,24 +409,24 @@ def on_dodge_reward(env:WarehouseBrawl, agent:str) -> float:
     dist = np.linalg.norm(dif)
     if getattr(opponent, 'state', None) and opponent.state == opponent.states_types.get('attack'):
         if dist <= 1.0:
-            return 8.0
+            return -((dist - 0.5) * 3.2)**3 + 4
         elif dist <= 1.6:
-            return 3.0
-    return 0.0
+            return 0
+    return -math.log(dist-1.6)
 
 # ----------------------------- REWARD MANAGER -----------------------------
 
 def gen_reward_manager():
     reward_functions = {
         'target_height_reward': RewTerm(func=base_height_l2, weight=0.2, params={'target_height': -4, 'obj_name': 'player'}),
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.6),
+        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=2),
         'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=2.0),
-        'having_weapon_reward' : RewTerm(func=having_weapon_reward, weight=0.5),
+        'having_weapon_reward' : RewTerm(func=having_weapon_reward, weight=0.9),
         'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=0.6),
-        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=1.0),
-        'edge_penalty_reward' : RewTerm(func=edge_penalty_reward, weight = 0.8),
+        'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=0.4),
+        'edge_penalty_reward' : RewTerm(func=edge_penalty_reward, weight = 1.3),
         'recovery_positioning_reward' : RewTerm(func=recovery_positioning_reward, weight =0.6),
-        'going_to_spawner_award' : RewTerm(func=going_to_spawner_award, weight=0.6),
+        'going_to_spawner_award' : RewTerm(func=going_to_spawner_award, weight=1.3),
     }
     signal_subscriptions = {
         'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=1.0)),
@@ -434,8 +434,8 @@ def gen_reward_manager():
         'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=0.8)),
         'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=0.8)),
         'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=1.0)),
-        'on_attack_reward':('attacked_signal', RewTerm(func = on_attack_reward , weight=0.9)),
-        'on_dodge_reward':('dodged_signal', RewTerm(func = on_dodge_reward , weight=0.8)),
+        'on_attack_reward':('attacked_signal', RewTerm(func = on_attack_reward , weight=1.2)),
+        'on_dodge_reward':('dodged_signal', RewTerm(func = on_dodge_reward , weight=1)),
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
