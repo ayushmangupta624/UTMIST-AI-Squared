@@ -452,7 +452,7 @@ if __name__ == '__main__':
         save_handler = SaveHandler(
             agent=my_agent,
             save_freq=100_000,
-            max_saved=100,
+            max_saved=1000,
             save_path='checkpoints',
             run_name='training_improved',
             mode=SaveHandlerMode.FORCE
