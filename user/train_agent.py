@@ -454,7 +454,6 @@ def on_dodge_reward(env:WarehouseBrawl, agent:str) -> float:
             return 0
     return -math.log(dist-1.5)
 
-
 def on_taunt_reward(env:WarehouseBrawl, agent:str) -> float:
     """penaltize for taunting, give out a big reward if taunted during opponent knockout"""
     if agent == "player":
@@ -512,7 +511,7 @@ if __name__ == '__main__':
     assert mode in ["single","multiple"]
 
     if mode == "single":
-        my_agent = EMARecurrentPPOAgent("checkpoints/EMA_2025-10-30-01-54-10/rl_model_2324768_steps.zip")
+        my_agent = EMARecurrentPPOAgent("checkpoints/EMA_2025-10-30-03-10-12/rl_model_4812883_steps.zip")
         reward_manager = gen_reward_manager()
         selfplay_handler = SelfPlayRandom(partial(type(my_agent)))
         save_handler = SaveHandler(
@@ -524,9 +523,9 @@ if __name__ == '__main__':
             mode=SaveHandlerMode.FORCE
         )
         opponent_specification = {
-            'self_play': (4, selfplay_handler),
+            'self_play': (2, selfplay_handler),
             'constant_agent': (15, partial(ConstantAgent)),
-            'based_agent': (10, partial(BasedAgent)),
+            'based_agent': (6, partial(BasedAgent)),
             'clockwise_agent': (1, partial(ClockworkAgent)),
         }
         opponent_cfg = OpponentsCfg(opponents=opponent_specification)
