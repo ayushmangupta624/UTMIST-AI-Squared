@@ -77,9 +77,9 @@ class RecurrentPPOAgent(Agent):
                 verbose=1,
                 n_steps=4086,
                 batch_size=512,
-                n_epochs=20,
-                gamma=0.93,
-                ent_coef=0.01,
+                n_epochs=30,
+                gamma=0.97,
+                ent_coef=0.02,
                 learning_rate=3e-4,
                 clip_range=0.25,
                 policy_kwargs=policy_kwargs,
@@ -120,7 +120,7 @@ class EMARecurrentPPOAgent(RecurrentPPOAgent):
         super()._initialize()
 
 
-class WoLFEMARecurrentPPOAgent(RecurrentPPOAgent):
+class WoLFEMARecurrentPPOAgent(RecurrentPPOAgent): # Trainings w this sucked, Im switching over to EMA
     def __init__(self, file_path: Optional[str] = None):
         super().__init__(file_path)
         self.fast_lr = 5e-4
@@ -156,9 +156,9 @@ class WoLFEMARecurrentPPOAgent(RecurrentPPOAgent):
                 verbose=1,
                 n_steps=4086,
                 batch_size=512,
-                n_epochs=35,
-                gamma=0.93,
-                ent_coef=0.01,
+                n_epochs=30,
+                gamma=0.97,
+                ent_coef=0.02,
                 learning_rate=self._get_learning_rate,
                 clip_range=0.25,
                 policy_kwargs=policy_kwargs,
@@ -255,7 +255,7 @@ class ClockworkAgent(Agent):
 
 
 def staying_alive_reward(env:WarehouseBrawl) -> float:
-    return 1/env.dt
+    return 1*env.dt
 
 def base_height_l2(env: WarehouseBrawl, target_height: float, obj_name: str = 'player') -> float:
     obj: GameObject = env.objects[obj_name]
@@ -351,7 +351,7 @@ def recovery_actions_award(env: WarehouseBrawl) -> float:
 
     if not is_in_danger:return 0
 
-    if player.state in [opponent.states_types.get("dodge"),opponent.states_types.get("attack"),opponent.states_types.get("dash"),opponent.states_types.get("taunt")]:
+    if player.state in [player.states_types.get("dodge"),player.states_types.get("attack"),player.states_types.get("dash"),player.states_types.get("taunt")]:
         return -20 * env.dt
     else:
         return 1 * env.dt
@@ -365,8 +365,8 @@ def move_to_opponent_reward(env: WarehouseBrawl) -> float:
     nv = np.linalg.norm(vel)
     if nd < 1e-6 or nv < 1e-6:
         return 0.0
-    mult = 1.0 if player.weapon != "Punch" else -0.2
-    return float(np.dot(vel / nv, dir_to / nd)) * mult * 0.5
+    mult = 15.0 if player.weapon != "Punch" else -3
+    return float(np.dot(vel / nv, dir_to / nd)) * mult *  env.dt
 
 def holding_more_than_3_keys(env: WarehouseBrawl) -> float:
     player: Player = env.objects["player"]
@@ -382,10 +382,10 @@ def having_weapon_reward(env: WarehouseBrawl) -> float:
     return (10.0 * env.dt) if player.weapon != "Punch" else (-5.0 * env.dt)
 
 def on_win_reward(env: WarehouseBrawl, agent: str) -> float:
-    return 50.0 if agent == 'player' else -50.0
+    return 50.0 if agent == 'player' else -200.0
 
 def on_knockout_reward(env: WarehouseBrawl, agent: str) -> float:
-    return 15.0 if agent == 'opponent' else -15.0
+    return 15.0 if agent == 'opponent' else -30.0
 
 def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == "player":
@@ -398,11 +398,11 @@ def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
 def on_drop_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == "player":
         # if env.objects["player"].weapon == "Punch":
-        return -20.0
+        return -30.0
     return 0
 
 def on_combo_reward(env: WarehouseBrawl, agent: str) -> float:
-    return 5.0 if agent == 'opponent' else -5.0
+    return 20.0 if agent == 'opponent' else -10.0
 
 def on_attack_reward(env:WarehouseBrawl, agent:str) -> float:
     if agent != 'player':
@@ -412,13 +412,13 @@ def on_attack_reward(env:WarehouseBrawl, agent:str) -> float:
     dif = np.array([opponent.body.position.x - player.body.position.x, opponent.body.position.y - player.body.position.y])
     dist = np.linalg.norm(dif)
     if dist <= 1.0:
-        return -((dist - 0.5) * 3.2)**3 + 4
+        return (-((dist - 0.5) * 3.2)**3 + 4)
     elif dist <= 1.6:
         val = 0
     else:
-        val = -math.log(dist-1.6)
+        val = -5*math.log(dist-1.5)
     if player.weapon == "Punch":
-        val -= 1.0
+        val -= 2.0
     return val
 
 def on_dodge_reward(env:WarehouseBrawl, agent:str) -> float:
@@ -433,7 +433,7 @@ def on_dodge_reward(env:WarehouseBrawl, agent:str) -> float:
             return -((dist - 0.5) * 3.2)**3 + 4
         elif dist <= 1.6:
             return 0
-    return -math.log(dist-1.6)
+    return -math.log(dist-1.5)
 
 
 def on_taunt_reward(env:WarehouseBrawl, agent:str) -> float:
@@ -441,15 +441,18 @@ def on_taunt_reward(env:WarehouseBrawl, agent:str) -> float:
     if agent == "player":
         if env.objects["opponent"].state == env.objects["opponent"].states_types.get("KO"):
             return 10
-        return -5
+        return -50
     return 0
 
 def on_dash_award(env:WarehouseBrawl, agent:str )-> float:
     """we are penaltizing dash because the AI 90% jumps off the map when it dashes."""
     if agent == "player":
-        return -3
+        return -4
     return 0
 
+
+
+#TODO: reward for standing on platform (small reward to guide ai)
 #TODO: reward for jumping while falling off the map (I dont think I can do that but yeah.)
 
 # ----------------------------- REWARD MANAGER -----------------------------
@@ -457,17 +460,18 @@ def on_dash_award(env:WarehouseBrawl, agent:str )-> float:
 def gen_reward_manager():
     reward_functions = {
         'target_height_reward': RewTerm(func=base_height_l2, weight=0.2, params={'target_height': -4, 'obj_name': 'player'}),
-        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=2),
+        'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=10),
         'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=2.0),
         'having_weapon_reward' : RewTerm(func=having_weapon_reward, weight=1),
-        'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=0.8),
+        'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=5),
         'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=0.4),
         'edge_penalty_reward' : RewTerm(func=edge_penalty_reward, weight = 1.3),
-        'recovery_positioning_reward' : RewTerm(func=recovery_positioning_reward, weight =0.8),
+        'recovery_positioning_reward' : RewTerm(func=recovery_positioning_reward, weight =0.4),
         'going_to_spawner_award' : RewTerm(func=going_to_spawner_award, weight=1.5),
         'staying_alive_reward' : RewTerm (func = staying_alive_reward, weight = 1),
         'recovery_actions_award' : RewTerm(func=recovery_actions_award, weight=1)
-    }
+        
+}
     signal_subscriptions = {
         'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=1.0)),
         'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=1.0)),
@@ -477,7 +481,7 @@ def gen_reward_manager():
         'on_attack_reward':('attacked_signal', RewTerm(func = on_attack_reward , weight=1.5)),
         'on_dodge_reward':('dodged_signal', RewTerm(func = on_dodge_reward , weight=1)),
         'on_taunt_reward': ('taunted_signal', RewTerm(func = on_taunt_reward, weight=1)),
-        'on_dash_award' : ('dashed_signal', RewTerm(func=on_dash_award, weight=1))
+        'on_dash_award' : ('dashed_signal', RewTerm(func=on_dash_award, weight=2))
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
@@ -488,7 +492,7 @@ if __name__ == '__main__':
     assert mode in ["single","multiple"]
 
     if mode == "single":
-        my_agent = RecurrentPPOAgent()
+        my_agent = EMARecurrentPPOAgent("checkpoints/WoLF_2025-10-29-17-28-08/rl_model_1924764_steps.zip")
         reward_manager = gen_reward_manager()
         selfplay_handler = SelfPlayRandom(partial(type(my_agent)))
         save_handler = SaveHandler(
@@ -496,14 +500,14 @@ if __name__ == '__main__':
             save_freq=100_000,
             max_saved=1000,
             save_path='checkpoints',
-            run_name=f'{"WoLF"}_{__import__("datetime").datetime.today().strftime("%Y-%m-%d-%H-%M-%S")}',
+            run_name=f'{"EMA"}_{__import__("datetime").datetime.today().strftime("%Y-%m-%d-%H-%M-%S")}',
             mode=SaveHandlerMode.FORCE
         )
         opponent_specification = {
-            'self_play': (5, selfplay_handler),
-            'constant_agent': (10, partial(ConstantAgent)),
-            'based_agent': (7, partial(BasedAgent)),
-            'clockwise_agent': (4, partial(ClockworkAgent)),
+            'self_play': (1, selfplay_handler),
+            'constant_agent': (15, partial(ConstantAgent)),
+            'based_agent': (10, partial(BasedAgent)),
+            'clockwise_agent': (1, partial(ClockworkAgent)),
         }
         opponent_cfg = OpponentsCfg(opponents=opponent_specification)
 
