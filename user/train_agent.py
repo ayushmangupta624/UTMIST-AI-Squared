@@ -381,6 +381,25 @@ def having_weapon_reward(env: WarehouseBrawl) -> float:
     player: Player = env.objects["player"]
     return (10.0 * env.dt) if player.weapon != "Punch" else (-5.0 * env.dt)
 
+def downward_velocity_reward(env: WarehouseBrawl) -> float:
+    """
+    Reward the agent for having a downward velocity magnitude exceeding 0.7.
+    Encourages aggressive dropping or fast descent when beneficial.
+
+    Returns:
+        float: Positive reward proportional to downward velocity over threshold, scaled by env.dt.
+    """
+    player: Player = env.objects["player"]
+    vy = player.body.velocity.y
+    
+    # Only consider downward velocity (negative y)
+    if vy < -0.5:
+        reward = (-vy - 0.5) * 10.0  # Scale factor 10; tune as necessary
+        return reward * env.dt
+    else:
+        return 0.0
+
+
 def on_win_reward(env: WarehouseBrawl, agent: str) -> float:
     return 50.0 if agent == 'player' else -200.0
 
@@ -461,24 +480,25 @@ def gen_reward_manager():
     reward_functions = {
         'target_height_reward': RewTerm(func=base_height_l2, weight=0.2, params={'target_height': -4, 'obj_name': 'player'}),
         'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=10),
-        'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=2.0),
-        'having_weapon_reward' : RewTerm(func=having_weapon_reward, weight=1),
+        'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=3.0),
+        'having_weapon_reward' : RewTerm(func=having_weapon_reward, weight=3),
         'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=5),
         'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=0.4),
         'edge_penalty_reward' : RewTerm(func=edge_penalty_reward, weight = 1.3),
-        'recovery_positioning_reward' : RewTerm(func=recovery_positioning_reward, weight =0.4),
-        'going_to_spawner_award' : RewTerm(func=going_to_spawner_award, weight=1.5),
+        'recovery_positioning_reward' : RewTerm(func=recovery_positioning_reward, weight =0.6),
+        'going_to_spawner_award' : RewTerm(func=going_to_spawner_award, weight=3),
         'staying_alive_reward' : RewTerm (func = staying_alive_reward, weight = 1),
-        'recovery_actions_award' : RewTerm(func=recovery_actions_award, weight=1)
+        'recovery_actions_award' : RewTerm(func=recovery_actions_award, weight=1),
+        'downward_velocity_reward' : RewTerm(func=downward_velocity_reward, weight=1)
         
 }
     signal_subscriptions = {
-        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=1.0)),
-        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=1.0)),
+        'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=1.4)),
+        'on_knockout_reward': ('knockout_signal', RewTerm(func=on_knockout_reward, weight=1.4)),
         'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=0.8)),
         'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=0.8)),
-        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=1.0)),
-        'on_attack_reward':('attacked_signal', RewTerm(func = on_attack_reward , weight=1.5)),
+        'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=1.2)),
+        'on_attack_reward':('attacked_signal', RewTerm(func = on_attack_reward , weight=2)),
         'on_dodge_reward':('dodged_signal', RewTerm(func = on_dodge_reward , weight=1)),
         'on_taunt_reward': ('taunted_signal', RewTerm(func = on_taunt_reward, weight=1)),
         'on_dash_award' : ('dashed_signal', RewTerm(func=on_dash_award, weight=2))
@@ -492,7 +512,7 @@ if __name__ == '__main__':
     assert mode in ["single","multiple"]
 
     if mode == "single":
-        my_agent = EMARecurrentPPOAgent("checkpoints/WoLF_2025-10-29-17-28-08/rl_model_1924764_steps.zip")
+        my_agent = EMARecurrentPPOAgent("checkpoints/EMA_2025-10-30-01-54-10/rl_model_2324768_steps.zip")
         reward_manager = gen_reward_manager()
         selfplay_handler = SelfPlayRandom(partial(type(my_agent)))
         save_handler = SaveHandler(
@@ -504,7 +524,7 @@ if __name__ == '__main__':
             mode=SaveHandlerMode.FORCE
         )
         opponent_specification = {
-            'self_play': (1, selfplay_handler),
+            'self_play': (4, selfplay_handler),
             'constant_agent': (15, partial(ConstantAgent)),
             'based_agent': (10, partial(BasedAgent)),
             'clockwise_agent': (1, partial(ClockworkAgent)),
@@ -516,7 +536,7 @@ if __name__ == '__main__':
               save_handler,
               opponent_cfg,
               CameraResolution.LOW,
-              train_timesteps=2_500_000,
+              train_timesteps=10_000_000,
               train_logging=TrainLogging.PLOT,
         )
     else:
