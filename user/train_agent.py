@@ -12,7 +12,110 @@ from typing import Optional, Type, List, Tuple
 from functools import partial
 
 # ----------------------------- AGENT CLASSES -----------------------------
+class ImprovedBasedAgent(Agent):#Thanks to Talha
+    '''
+    Improved BasedAgent:
+        
+    More aggressive and adaptive than the original.
+    Uses distance control, jump attacks, and short combos.
+    Includes randomness to avoid being predictable.
+    '''
+    def init(self, args, **kwargs):
+        super().init(args, **kwargs)
+        self.time = 0
+        self.combo_stage = 0
+        self.combo_cooldown = 0
+        self.combo_timer = 0
+        random.seed(42)
 
+        def _reset_combo(self):
+            self.combo_stage = 0
+            self.combo_cooldown = 0
+            self.combo_timer = 0
+
+        def _start_combo(self):
+            self.combo_stage = 1
+            self.combo_timer = 6
+            self.combo_cooldown = 15
+    def predict(self, obs):
+            self.time += 1
+            if self.combo_cooldown > 0:
+                self.combo_cooldown -= 1
+            if self.combo_timer > 0:
+                self.combo_timer -= 1
+                if self.combo_timer == 0:
+                    self.combo_stage = 2  # finish combo
+
+            pos = self.obs_helper.get_section(obs, 'player_pos')
+            opp_pos = self.obs_helper.get_section(obs, 'opponent_pos')
+            opp_state = self.obs_helper.get_section(obs, 'opponent_state')
+            opp_KO = opp_state in [5, 11]
+
+            action = self.act_helper.zeros()
+            dx = opp_pos[0] - pos[0]
+            dy = opp_pos[1] - pos[1]
+            dist = (dx2 + dy2) ** 0.5
+
+
+            if pos[0] > 10.67/2:
+                return self.act_helper.press_keys(['a'])
+            elif pos[0] < -10.67/2:
+                return self.act_helper.press_keys(['d'])
+
+
+            if dist < 1.0 and random.random() < 0.15:
+                if dx > 0:
+                    return self.act_helper.press_keys(['a'])
+                else:
+                    return self.act_helper.press_keys(['d'])
+
+
+            if (pos[1] > 1.5 or pos[1] > opp_pos[1]) and self.time % 3 == 0:
+                action = self.act_helper.press_keys(['space'])
+                if random.random() < 0.6:
+                    action = self.act_helper.press_keys(['j'], action)
+                return action
+
+
+            if dist < 1.5 and not opp_KO:
+                if self.combo_stage == 0 and self.combo_cooldown == 0:
+                    self._start_combo()
+                    return self.act_helper.press_keys(['j'])
+                elif self.combo_stage == 1:
+                    if dx > 0:
+                        return self.act_helper.press_keys(['d', 'j'])
+                    else:
+                        return self.act_helper.press_keys(['a', 'j'])
+                elif self.combo_stage == 2:
+                    self._reset_combo()
+                    return self.act_helper.press_keys(['j'])
+            if dist > 3.5 and not opp_KO:
+                    if dx > 0:
+                        action = self.act_helper.press_keys(['d'])
+                    else:
+                        action = self.act_helper.press_keys(['a'])
+                    # Occasionally dash jump
+                    if random.random() < 0.2:
+                        action = self.act_helper.press_keys(['space'], action)
+                    return action
+
+
+            if 1.5 < dist <= 3.5 and random.random() < 0.25:
+                action = self.act_helper.press_keys(['j'])
+                if random.random() < 0.2:
+                    action = self.act_helper.press_keys(['space'], action)
+                return action
+
+
+            if opp_KO:
+                if pos[0] > 0.5:
+                    return self.act_helper.press_keys(['a'])
+                elif pos[0] < -0.5:
+                    return self.act_helper.press_keys(['d'])
+                else:
+                    return self.act_helper.press_keys(['j'])
+
+            return action
 class SB3Agent(Agent):
     def __init__(self, sb3_class: Optional[Type[BaseAlgorithm]] = PPO, file_path: Optional[str] = None):
         self.sb3_class = sb3_class
@@ -66,7 +169,7 @@ class RecurrentPPOAgent(Agent):
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
                 'lstm_hidden_size': 512,
-                'net_arch': [dict(pi=[512,1024,512], vf=[512,1024, 512])],
+                'net_arch': [dict(pi=[512,512,512], vf=[512,512, 512])],
                 'shared_lstm': False,
                 'enable_critic_lstm': True,
                 'share_features_extractor': True,
@@ -76,11 +179,11 @@ class RecurrentPPOAgent(Agent):
                 self.env,
                 verbose=1,
                 n_steps=4086,
-                batch_size=1024,
-                n_epochs=30,
+                batch_size=2048,
+                n_epochs=40,
                 gamma=0.97,
                 ent_coef=0.02,
-                learning_rate=3e-4,
+                learning_rate=5e-4,
                 clip_range=0.20,
                 policy_kwargs=policy_kwargs,
                 device=device
@@ -449,7 +552,24 @@ def on_attack_reward(env:WarehouseBrawl, agent:str) -> float:
         val = 0
     else:
         return -1
-    
+    # Vector from player to opponent
+    vec_to_opponent = np.array([
+        opponent.body.position.x - player.body.position.x,
+        opponent.body.position.y - player.body.position.y
+    ])
+
+    # Check if opponent is to the right or left relative to player
+    opponent_is_right = vec_to_opponent[0] > 0
+
+    # Player facing value (Facing.RIGHT = 1, Facing.LEFT = -1)
+    player_facing_right = (player.facing == Facing.RIGHT)
+
+    # Reward 1.0 if player faces opponent correctly, else -0.5
+    if (opponent_is_right and player_facing_right) or (not opponent_is_right and not player_facing_right):
+        val+=10
+    else:
+        val-=5
+
     if getattr(player, 'state', None) and player.state == player.states_types.get('in_air'):
         val = -5
     if player.weapon == "Punch":
@@ -554,7 +674,7 @@ if __name__ == '__main__':
     assert mode in ["single","multiple"]
 
     if mode == "single":
-        my_agent = EMARecurrentPPOAgent( (r"checkpoints\EMA_LAST_ATTEMPT2_2025-10-31-02-36-30\rl_model_1400014_steps.zip".replace('\\','/')))
+        my_agent = EMARecurrentPPOAgent( )
         reward_manager = gen_reward_manager()
         selfplay_handler = SelfPlayRandom(partial(type(my_agent)))
         save_handler = SaveHandler(
@@ -562,7 +682,7 @@ if __name__ == '__main__':
             save_freq=100_000,
             max_saved=1000,
             save_path='checkpoints',
-            run_name=f'{"EMA_LAST_ATTEMPT2"}_{__import__("datetime").datetime.today().strftime("%Y-%m-%d-%H-%M-%S")}',
+            run_name=f'{"EMA_LAST_LAST_ATTEMPT3"}_{__import__("datetime").datetime.today().strftime("%Y-%m-%d-%H-%M-%S")}',
             mode=SaveHandlerMode.FORCE
         )
         opponent_specification = {
