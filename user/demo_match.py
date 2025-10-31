@@ -5,17 +5,17 @@ from user.my_agent import SubmittedAgent
 import pygame
 pygame.init()
 
-my_agent =UserInputAgent()
+my_agent= UserInputAgent()
 
 #Input your file path here in SubmittedAgent if you are loading a model:
-opponent = SubmittedAgent("checkpoints/EMA_2025-10-30-03-10-12/rl_model_4600045_steps.zip")
+opponent = SubmittedAgent(r"checkpoints\EMA_LAST_ATTEMPT2_2025-10-31-02-36-30\rl_model_1400014_steps.zip".replace('\\','/'))
 
 match_time = 99999
 
 # Run a single real-time match
 run_real_time_match(
-    agent_1=my_agent,
-    agent_2=opponent,
+    agent_1=opponent,
+    agent_2=my_agent,
     max_timesteps=30 * match_time,  # Match time in frames (adjust as needed)
     resolution=CameraResolution.LOW,
     # video_path='tt_agent.mp4',

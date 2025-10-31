@@ -477,7 +477,7 @@ class OpponentsCfg():
 class SelfPlayWarehouseBrawl(gymnasium.Env):
     """Custom Environment that follows gym interface."""
 
-    metadata = {"render_modes": ["human"], "render_fps": 30}
+    metadata = {"render_modes": ["human"], "render_fps": 20}
 
     def __init__(self,
                  reward_manager: Optional[RewardManager]=None,
@@ -1053,20 +1053,19 @@ def train(agent: Agent,
 ## Run Human vs AI match function
 import pygame
 from pygame.locals import QUIT
-
 def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=30*90, resolution=CameraResolution.LOW):
     pygame.init()
 
     pygame.mixer.init()
 
     # Load your soundtrack (must be .wav, .ogg, or supported format)
-    # pygame.mixer.music.load("environment/assets/soundtrack.mp3")
+    pygame.mixer.music.load("environment/assets/soundtrack.mp3")
 
     # Play it on loop: -1 = loop forever
-    # pygame.mixer.music.play(-1)
+    pygame.mixer.music.play(-1)
 
     # Optional: set volume (0.0 to 1.0)
-    # pygame.mixer.music.set_volume(0.2)
+    pygame.mixer.music.set_volume(0.2)
 
     resolutions = {
         CameraResolution.LOW: (480, 720),
@@ -1083,6 +1082,15 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
 
     # Initialize environment
     env = WarehouseBrawl(resolution=resolution, train_mode=False)
+    
+    # reward manager
+    from user.train_agent import gen_reward_manager
+    reward_manager = gen_reward_manager()
+
+    if reward_manager is not None:
+        reward_manager.reset()
+        reward_manager.subscribe_signals(env)
+
     observations, _ = env.reset()
     obs_1 = observations[0]
     obs_2 = observations[1]
@@ -1116,6 +1124,10 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
         observations, rewards, terminated, truncated, info = env.step(full_action)
         obs_1 = observations[0]
         obs_2 = observations[1]
+
+        # reward process
+        if reward_manager is not None:
+            reward_manager.process(env, 1 / env.fps)
 
         # Render the game
         
