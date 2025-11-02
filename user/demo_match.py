@@ -11,7 +11,7 @@ pygame.init()
 my_agent= BasedAgent()
 
 #Input your file path here in SubmittedAgent if you are loading a model:
-opponent = UserInputAgent()#SubmittedAgent(r"checkpoints\EMA_MORE_STEPS_2025-11-01-12-11-09\rl_model_9975892_steps.zip".replace('\\','/'))
+opponent = StallingAgent()#SubmittedAgent(r"checkpoints\EMA_MORE_STEPS_2025-11-01-12-11-09\rl_model_9975892_steps.zip".replace('\\','/'))
 
 match_time = 999999
 
