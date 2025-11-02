@@ -12,110 +12,283 @@ from typing import Optional, Type, List, Tuple
 from functools import partial
 
 # ----------------------------- AGENT CLASSES -----------------------------
-class ImprovedBasedAgent(Agent):#Thanks to Talha
-    '''
-    Improved BasedAgent:
-        
-    More aggressive and adaptive than the original.
-    Uses distance control, jump attacks, and short combos.
-    Includes randomness to avoid being predictable.
-    '''
-    def init(self, args, **kwargs):
-        super().init(args, **kwargs)
+
+class ImprovedBasedAgent(Agent):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        import random
+        random.seed(1234)
+        self.random = random
         self.time = 0
+
+        # combo state
         self.combo_stage = 0
         self.combo_cooldown = 0
         self.combo_timer = 0
-        random.seed(42)
 
-        def _reset_combo(self):
-            self.combo_stage = 0
-            self.combo_cooldown = 0
-            self.combo_timer = 0
+        # defensive timers
+        self.last_dodge = -999
+        self.dodge_cooldown = 30  # frames
 
-        def _start_combo(self):
-            self.combo_stage = 1
-            self.combo_timer = 6
-            self.combo_cooldown = 15
+        # movement smoothing, avoid spam
+        self.last_dash = -999
+        self.dash_cooldown = 60
+
+    def _reset_combo(self):
+        self.combo_stage = 0
+        self.combo_cooldown = 0
+        self.combo_timer = 0
+
+    def _start_combo(self):
+        self.combo_stage = 1
+        self.combo_timer = 6
+        self.combo_cooldown = 25
+
+    def _should_dodge(self, opp_state, dist):
+        """
+        Basit kural: rakip saldırı içindeyse ve yakınsa dodge/geri çekil
+        """
+        attacking_states = [self.obs_helper.get_state_code('attack'), self.obs_helper.get_state_code('charge')] if hasattr(self.obs_helper, 'get_state_code') else []
+        # fallback: check numeric states commonly used earlier (attack might be present)
+        if getattr(opp_state, 'name', None) and 'attack' in opp_state.name.lower():
+            return True
+        # numeric fallback: treat some state ints as attack (best-effort)
+
+
     def predict(self, obs):
-            self.time += 1
-            if self.combo_cooldown > 0:
-                self.combo_cooldown -= 1
-            if self.combo_timer > 0:
-                self.combo_timer -= 1
-                if self.combo_timer == 0:
-                    self.combo_stage = 2  # finish combo
+        self.time += 1
+        if self.combo_cooldown > 0:
+            self.combo_cooldown -= 1
+        if self.combo_timer > 0:
+            self.combo_timer -= 1
+            if self.combo_timer == 0:
+                self.combo_stage = 2  # progress combo
 
-            pos = self.obs_helper.get_section(obs, 'player_pos')
-            opp_pos = self.obs_helper.get_section(obs, 'opponent_pos')
-            opp_state = self.obs_helper.get_section(obs, 'opponent_state')
-            opp_KO = opp_state in [5, 11]
+        pos = self.obs_helper.get_section(obs, 'player_pos')
+        opp_pos = self.obs_helper.get_section(obs, 'opponent_pos')
+        opp_state = self.obs_helper.get_section(obs, 'opponent_state')
+        # Some envs return int for opponent_state; we keep existing checks too
+        opp_KO = opp_state in [5, 11]
 
-            action = self.act_helper.zeros()
-            dx = opp_pos[0] - pos[0]
-            dy = opp_pos[1] - pos[1]
-            dist = (dx2 + dy2) ** 0.5
+        action = self.act_helper.zeros()
+        dx = opp_pos[0] - pos[0]
+        dy = opp_pos[1] - pos[1]
+        dist = (dx*dx + dy*dy) ** 0.5
+
+        edge = 10.67 / 2
+        edge_margin = 1.2  # ekstra güvenli alan
+
+        # 1) Eğer edge'e çok yakınsak, hemen içeri dön (kenardan kurtul)
+        if pos[0] > edge - edge_margin:
+            # sola git
+            return self.act_helper.press_keys(['a'])
+        if pos[0] < -edge + edge_margin:
+            return self.act_helper.press_keys(['d'])
+
+        # 2) Eğer rakip KO ise pozisyon kur (güvenli uzaklık / yaklaş)
+        if opp_KO:
+            # rakip yerdeyse pozisyon al ve gereksiz saldırı yapma
+            if abs(pos[0]) > 0.6:
+                return self.act_helper.press_keys(['a' if pos[0] > 0 else 'd'])
+            else:
+                # yaklaşıp j ile finish (şanslı bir bitiriş)
+                if dist < 1.0:
+                    return self.act_helper.press_keys(['j'])
+                return self.act_helper.press_keys([])  # bekle
 
 
-            if pos[0] > 10.67/2:
-                return self.act_helper.press_keys(['a'])
-            elif pos[0] < -10.67/2:
-                return self.act_helper.press_keys(['d'])
 
-
-            if dist < 1.0 and random.random() < 0.15:
+        if dist > 3.5:
+            # close the gap with cautious movement; occasionally dash+jump to close quickly
+            if self.random.random() < 0.15 and (self.time - self.last_dash) > self.dash_cooldown:
+                self.last_dash = self.time
+                # dash + jump to close
                 if dx > 0:
-                    return self.act_helper.press_keys(['a'])
+                    action = self.act_helper.press_keys(['d'])
                 else:
-                    return self.act_helper.press_keys(['d'])
-
-
-            if (pos[1] > 1.5 or pos[1] > opp_pos[1]) and self.time % 3 == 0:
-                action = self.act_helper.press_keys(['space'])
-                if random.random() < 0.6:
-                    action = self.act_helper.press_keys(['j'], action)
-                return action
-
-
-            if dist < 1.5 and not opp_KO:
-                if self.combo_stage == 0 and self.combo_cooldown == 0:
-                    self._start_combo()
-                    return self.act_helper.press_keys(['j'])
-                elif self.combo_stage == 1:
-                    if dx > 0:
-                        return self.act_helper.press_keys(['d', 'j'])
-                    else:
-                        return self.act_helper.press_keys(['a', 'j'])
-                elif self.combo_stage == 2:
-                    self._reset_combo()
-                    return self.act_helper.press_keys(['j'])
-            if dist > 3.5 and not opp_KO:
-                    if dx > 0:
-                        action = self.act_helper.press_keys(['d'])
-                    else:
-                        action = self.act_helper.press_keys(['a'])
-                    # Occasionally dash jump
-                    if random.random() < 0.2:
-                        action = self.act_helper.press_keys(['space'], action)
-                    return action
-
-
-            if 1.5 < dist <= 3.5 and random.random() < 0.25:
-                action = self.act_helper.press_keys(['j'])
-                if random.random() < 0.2:
+                    action = self.act_helper.press_keys(['a'])
+                if self.random.random() < 0.6:
                     action = self.act_helper.press_keys(['space'], action)
                 return action
+            else:
+                return self.act_helper.press_keys(['d'] if dx > 0 else ['a'])
 
+        if 1.5 < dist <= 3.5:
+            if self.random.random() < 0.6:
+                action = self.act_helper.press_keys(['space'])
+                if self.random.random() < 0.4:
+                    action = self.act_helper.press_keys(['j'], action)
+                return action
+            else:
+                # approach carefully
+                return self.act_helper.press_keys(['d'] if dx > 0 else ['a'])
 
-            if opp_KO:
-                if pos[0] > 0.5:
-                    return self.act_helper.press_keys(['a'])
-                elif pos[0] < -0.5:
-                    return self.act_helper.press_keys(['d'])
+        if dist <= 1.5:
+            # start combo if ready
+            if self.combo_stage == 0 and self.combo_cooldown == 0 and self.random.random() < 0.9:
+                self._start_combo()
+                return self.act_helper.press_keys(['j'])
+            elif self.combo_stage == 1:
+                if dx > 0:
+                    return self.act_helper.press_keys(['d', 'j'])
                 else:
-                    return self.act_helper.press_keys(['j'])
+                    return self.act_helper.press_keys(['a', 'j'])
+            elif self.combo_stage == 2:
+                # finish
+                self._reset_combo()
+                # chance to space + heavy
+                if self.random.random() < 0.4:
+                    return self.act_helper.press_keys(['space', 'j'])
+                return self.act_helper.press_keys(['j'])
 
+        # 8) If slightly above opponent, try aerial punish occasionally
+        if pos[1] - opp_pos[1] > 0.6 and dist < 2.0 and self.time % 3 == 0:
+            action = self.act_helper.press_keys(['space'])
+            if self.random.random() < 0.5:
+                action = self.act_helper.press_keys(['j'], action)
             return action
+
+        # 9) fallback: face opponent and approach (or step back if too close)
+        if dist < 0.8:
+            # too close: step back and maybe light attack
+            if self.random.random() < 0.4:
+                return self.act_helper.press_keys(['a' if dx > 0 else 'd'])
+            else:
+                return self.act_helper.press_keys(['j'])
+        else:
+            return self.act_helper.press_keys(['d'] if dx > 0 else ['a'])
+"""player_pos: 2
+player_vel: 2
+player_facing: 1
+player_grounded: 1
+player_aerial: 1
+player_jumps_left: 1
+player_state: 1
+player_recoveries_left: 1
+player_dodge_timer: 1
+player_stun_frames: 1
+player_damage: 1
+player_stocks: 1
+player_move_type: 1
+player_weapon_type: 1
+player_spawner_1: 3
+player_spawner_2: 3
+player_spawner_3: 3
+player_spawner_4: 3
+player_moving_platform_pos: 2
+player_moving_platform_vel: 2
+opponent_pos: 2
+opponent_vel: 2
+opponent_facing: 1
+opponent_grounded: 1
+opponent_aerial: 1
+opponent_jumps_left: 1
+opponent_state: 1
+opponent_recoveries_left: 1
+opponent_dodge_timer: 1
+opponent_stun_frames: 1
+opponent_damage: 1
+opponent_stocks: 1
+opponent_move_type: 1
+opponent_weapon_type: 1
+opponent_spawner_1: 3
+opponent_spawner_2: 3
+opponent_spawner_3: 3
+opponent_spawner_4: 3
+opponent_moving_platform_pos: 2
+opponent_moving_platform_vel: 2"""
+
+class StallingAgent(Agent):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.time = 0
+        self.spawnpos=None
+        self.starter = 0
+        self.boundries = 0.15
+        self.yboundary = 0
+        self.pressedh = False
+        self.spacecd = 0
+        self.spearseen = False
+
+    def predict(self, obs):
+        pos = self.obs_helper.get_section(obs, 'player_pos')
+        if self.time ==0:
+            self.spawnpos = pos
+            if pos[0]<0:
+                self.yboundary=3
+            else:
+                self.yboundary=0.7
+            self.starter = self.obs_helper.get_section(obs, 'player_weapon_type')
+
+            # print(self.obs_helper.print_all_sections())
+
+        self.time += 1
+        keys_pressed = []
+        boundries =  self.boundries = 0.18
+        player_vel = self.obs_helper.get_section(obs, 'player_vel')
+        opp_pos = self.obs_helper.get_section(obs, 'opponent_pos')
+        opp_KO = self.obs_helper.get_section(obs, 'opponent_state') in [5, 11]
+        action = self.act_helper.zeros()
+        edge = 10.67 / 2
+        sideways_move = False
+        heavy_attack = False
+
+
+        if self.spacecd >0:
+            self.spacecd -=1
+        
+        if pos[1]>self.yboundary:
+            if self.spacecd == 0:
+                keys_pressed.append('space')
+                self.spacecd =15
+            
+        if pos[0] > self.spawnpos[0]+boundries:
+            keys_pressed.append('a')
+            sideways_move = True
+        elif pos[0] < self.spawnpos[0]-boundries:
+            keys_pressed.append('d')
+            sideways_move = True
+        elif not opp_KO:
+            if (opp_pos[0] > pos[0]) and 0==self.obs_helper.get_section(obs,"player_facing"): #player.facing == Facing.RIGHT
+                keys_pressed.append('d')
+                sideways_move = True
+            elif (opp_pos[0] < pos[0]) and 1==self.obs_helper.get_section(obs,"player_facing"):
+                keys_pressed.append('a')
+                sideways_move = True
+        else:
+            pass
+            # action = self.act_helper.press_keys(['g']) # h is pickup
+
+        # if not sideways_move and pos[0]-boundries< self.spawnpos[0] <pos[0]+boundries and opp_pos[0]-boundries< self.spawnpos[0] <opp_pos[0]+boundries:
+
+        #     if opp_pos[1]>pos[1]:
+        #         keys_pressed.append('s')
+        #         keys_pressed.append('k')
+        #     else:
+        #         keys_pressed.append('k')
+        #     heavy_attack = True
+        # print("Variable content:", self.obs_helper.get_section(obs, 'player_weapon_type'))
+        # print("Type:", type(self.obs_helper.get_section(obs, 'player_weapon_type')))
+        # print("Dtype:", self.obs_helper.get_section(obs, 'player_weapon_type').dtype)
+        # print("Shape:", self.obs_helper.get_section(obs, 'player_weapon_type').shape)
+        # print('player_weapon_type',-0.0001 <float( self.obs_helper.get_section(obs, 'player_weapon_type')[0]) - 1 < 0.0001 )
+        # a = np.array([1.], dtype=np.float64) # spear
+        if not self.spearseen and self.obs_helper.get_section(obs, 'player_weapon_type') == self.starter or -0.0001 <float( self.obs_helper.get_section(obs, 'player_weapon_type')[0]) - 1 < 0.0001 :
+           if not self.pressedh:
+                keys_pressed.append('h')
+            
+           self.spearseen =-0.0001 <float( self.obs_helper.get_section(obs, 'player_weapon_type')[0]) - 1 < 0.0001
+           
+           self.pressedh = not self.pressedh
+
+        if not sideways_move and not heavy_attack and (pos[0] - opp_pos[0])**2 + (pos[1] - opp_pos[1])**2 < 3.9:
+            keys_pressed.append('j')
+        # print(keys_pressed)
+        action=self.act_helper.press_keys(keys_pressed,action)
+        return action
+
 class SB3Agent(Agent):
     def __init__(self, sb3_class: Optional[Type[BaseAlgorithm]] = PPO, file_path: Optional[str] = None):
         self.sb3_class = sb3_class
@@ -128,7 +301,7 @@ class SB3Agent(Agent):
                 "MlpPolicy",
                 self.env,
                 verbose=1,
-                n_steps=4086,
+                n_steps=4086*4,
                 batch_size=512,
                 n_epochs=20,
                 learning_rate=3e-4,
@@ -169,7 +342,7 @@ class RecurrentPPOAgent(Agent):
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
                 'lstm_hidden_size': 512,
-                'net_arch': [dict(pi=[512,512,512], vf=[512,512, 512])],
+                'net_arch': [dict(pi=[512,512,512], vf=[512,512,512])],
                 'shared_lstm': False,
                 'enable_critic_lstm': True,
                 'share_features_extractor': True,
@@ -178,12 +351,12 @@ class RecurrentPPOAgent(Agent):
                 "MlpLstmPolicy",
                 self.env,
                 verbose=1,
-                n_steps=4086,
-                batch_size=2048,
-                n_epochs=40,
+                n_steps=4086*16,
+                batch_size=128,
+                n_epochs=30,
                 gamma=0.97,
                 ent_coef=0.02,
-                learning_rate=5e-4,
+                learning_rate=4e-4,
                 clip_range=0.20,
                 policy_kwargs=policy_kwargs,
                 device=device
@@ -570,6 +743,8 @@ def on_attack_reward(env:WarehouseBrawl, agent:str) -> float:
     else:
         val-=5
 
+    val -=5
+
     if getattr(player, 'state', None) and player.state == player.states_types.get('in_air'):
         val = -5
     if player.weapon == "Punch":
@@ -642,13 +817,13 @@ def gen_reward_manager():
         'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=15),
         'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=4.0),
         'having_weapon_reward' : RewTerm(func=having_weapon_reward, weight=3),
-        'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=6),
+        'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=10),
         'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=0.6),
         'edge_penalty_reward' : RewTerm(func=edge_penalty_reward, weight = 10),
         'recovery_positioning_reward' : RewTerm(func=recovery_positioning_reward, weight =3),
         'going_to_spawner_award' : RewTerm(func=going_to_spawner_award, weight=6),
         'staying_alive_reward' : RewTerm (func = staying_alive_reward, weight = 6),
-        'recovery_actions_award' : RewTerm(func=recovery_actions_award, weight=1),
+        'recovery_actions_award' : RewTerm(func=recovery_actions_award, weight=2),
         'downward_velocity_reward' : RewTerm(func=downward_velocity_reward, weight=3),
         'platform_reward' : RewTerm(func = platform_reward, weight =4),
         'head_to_middle_reward' : RewTerm(func=head_to_middle_reward, weight = 2)
@@ -660,10 +835,10 @@ def gen_reward_manager():
         'on_combo_reward': ('hit_during_stun', RewTerm(func=on_combo_reward, weight=1.5)),
         'on_equip_reward': ('weapon_equip_signal', RewTerm(func=on_equip_reward, weight=3)),
         'on_drop_reward': ('weapon_drop_signal', RewTerm(func=on_drop_reward, weight=5)),
-        'on_attack_reward':('attacked_signal', RewTerm(func = on_attack_reward , weight=4)),
+        'on_attack_reward':('attacked_signal', RewTerm(func = on_attack_reward , weight=6)),
         'on_dodge_reward':('dodged_signal', RewTerm(func = on_dodge_reward , weight=2)),
-        'on_taunt_reward': ('taunted_signal', RewTerm(func = on_taunt_reward, weight=1)),
-        'on_dash_award' : ('dashed_signal', RewTerm(func=on_dash_award, weight=2))
+        'on_taunt_reward': ('taunted_signal', RewTerm(func = on_taunt_reward, weight=5)),
+        'on_dash_award' : ('dashed_signal', RewTerm(func=on_dash_award, weight=5))
     }
     return RewardManager(reward_functions, signal_subscriptions)
 
@@ -674,7 +849,7 @@ if __name__ == '__main__':
     assert mode in ["single","multiple"]
 
     if mode == "single":
-        my_agent = EMARecurrentPPOAgent( )
+        my_agent = EMARecurrentPPOAgent(r"checkpoints\EMA_MORE_STEPS_2025-11-01-03-25-23\rl_model_7975872_steps.zip".replace("\\","/"))
         reward_manager = gen_reward_manager()
         selfplay_handler = SelfPlayRandom(partial(type(my_agent)))
         save_handler = SaveHandler(
@@ -682,7 +857,7 @@ if __name__ == '__main__':
             save_freq=100_000,
             max_saved=1000,
             save_path='checkpoints',
-            run_name=f'{"EMA_LAST_LAST_ATTEMPT3"}_{__import__("datetime").datetime.today().strftime("%Y-%m-%d-%H-%M-%S")}',
+            run_name=f'{"EMA_MORE_STEPS"}_{__import__("datetime").datetime.today().strftime("%Y-%m-%d-%H-%M-%S")}',
             mode=SaveHandlerMode.FORCE
         )
         opponent_specification = {

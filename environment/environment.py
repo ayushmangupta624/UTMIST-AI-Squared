@@ -853,7 +853,7 @@ class WarehouseBrawl(MalachiteEnv[np.ndarray, np.ndarray, int]):
         self.logger = ['', '']
 
         # Params
-        self.fps = 20
+        self.fps = 30
         self.dt = 1 / self.fps
         if self.game_mode == GameMode.ATTACK_DEBUG:
             self.max_timesteps = self.fps * 99999

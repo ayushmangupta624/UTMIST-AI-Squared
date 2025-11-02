@@ -477,7 +477,7 @@ class OpponentsCfg():
 class SelfPlayWarehouseBrawl(gymnasium.Env):
     """Custom Environment that follows gym interface."""
 
-    metadata = {"render_modes": ["human"], "render_fps": 20}
+    metadata = {"render_modes": ["human"], "render_fps": 30}
 
     def __init__(self,
                  reward_manager: Optional[RewardManager]=None,

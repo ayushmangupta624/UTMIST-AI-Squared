@@ -25,36 +25,91 @@ class SubmittedAgent(Agent):
     '''
     Input the **file_path** to your agent here for submission!
     '''
-    def __init__(
-        self,
-        file_path: Optional[str] = None,
-    ):
-        super().__init__(file_path)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-    def _initialize(self) -> None:
-        if self.file_path is None:
-            self.model = PPO("MlpPolicy", self.env, verbose=0)
-            del self.env
-        else:
-            self.model = PPO.load(self.file_path)
-
-    def _gdown(self) -> str:
-        data_path = "rl-model.zip"
-        if not os.path.isfile(data_path):
-            print(f"Downloading {data_path}...")
-            # Place a link to your PUBLIC model data here. This is where we will download it from on the tournament server.
-            url = "https://drive.google.com/file/d/1JIokiBOrOClh8piclbMlpEEs6mj3H1HJ/view?usp=sharing"
-            gdown.download(url, output=data_path, fuzzy=True)
-        return data_path
+        self.time = 0
+        self.spawnpos=None
+        self.starter = 0
+        self.boundries = 0.15
+        self.yboundary = 0
+        self.pressedh = False
+        self.spacecd = 0
+        self.spearseen = False
 
     def predict(self, obs):
-        action, _ = self.model.predict(obs)
+        pos = self.obs_helper.get_section(obs, 'player_pos')
+        if self.time ==0:
+            self.spawnpos = pos
+            if pos[0]<0:
+                self.yboundary=3
+            else:
+                self.yboundary=0.7
+            self.starter = self.obs_helper.get_section(obs, 'player_weapon_type')
+
+            # print(self.obs_helper.print_all_sections())
+
+        self.time += 1
+        keys_pressed = []
+        boundries =  self.boundries = 0.18
+        player_vel = self.obs_helper.get_section(obs, 'player_vel')
+        opp_pos = self.obs_helper.get_section(obs, 'opponent_pos')
+        opp_KO = self.obs_helper.get_section(obs, 'opponent_state') in [5, 11]
+        action = self.act_helper.zeros()
+        edge = 10.67 / 2
+        sideways_move = False
+        heavy_attack = False
+
+
+        if self.spacecd >0:
+            self.spacecd -=1
+        
+        if pos[1]>self.yboundary:
+            if self.spacecd == 0:
+                keys_pressed.append('space')
+                self.spacecd =15
+            
+        if pos[0] > self.spawnpos[0]+boundries:
+            keys_pressed.append('a')
+            sideways_move = True
+        elif pos[0] < self.spawnpos[0]-boundries:
+            keys_pressed.append('d')
+            sideways_move = True
+        elif not opp_KO:
+            if (opp_pos[0] > pos[0]) and 0==self.obs_helper.get_section(obs,"player_facing"): #player.facing == Facing.RIGHT
+                keys_pressed.append('d')
+                sideways_move = True
+            elif (opp_pos[0] < pos[0]) and 1==self.obs_helper.get_section(obs,"player_facing"):
+                keys_pressed.append('a')
+                sideways_move = True
+        else:
+            pass
+            # action = self.act_helper.press_keys(['g']) # h is pickup
+
+        # if not sideways_move and pos[0]-boundries< self.spawnpos[0] <pos[0]+boundries and opp_pos[0]-boundries< self.spawnpos[0] <opp_pos[0]+boundries:
+
+        #     if opp_pos[1]>pos[1]:
+        #         keys_pressed.append('s')
+        #         keys_pressed.append('k')
+        #     else:
+        #         keys_pressed.append('k')
+        #     heavy_attack = True
+        # print("Variable content:", self.obs_helper.get_section(obs, 'player_weapon_type'))
+        # print("Type:", type(self.obs_helper.get_section(obs, 'player_weapon_type')))
+        # print("Dtype:", self.obs_helper.get_section(obs, 'player_weapon_type').dtype)
+        # print("Shape:", self.obs_helper.get_section(obs, 'player_weapon_type').shape)
+        # print('player_weapon_type',-0.0001 <float( self.obs_helper.get_section(obs, 'player_weapon_type')[0]) - 1 < 0.0001 )
+        # a = np.array([1.], dtype=np.float64) # spear
+        if not self.spearseen and self.obs_helper.get_section(obs, 'player_weapon_type') == self.starter or -0.0001 <float( self.obs_helper.get_section(obs, 'player_weapon_type')[0]) - 1 < 0.0001 :
+           if not self.pressedh:
+                keys_pressed.append('h')
+            
+           self.spearseen =-0.0001 <float( self.obs_helper.get_section(obs, 'player_weapon_type')[0]) - 1 < 0.0001
+           
+           self.pressedh = not self.pressedh
+
+        if not sideways_move and not heavy_attack and (pos[0] - opp_pos[0])**2 + (pos[1] - opp_pos[1])**2 < 3.9:
+            keys_pressed.append('j')
+        # print(keys_pressed)
+        action=self.act_helper.press_keys(keys_pressed,action)
         return action
-
-    def save(self, file_path: str) -> None:
-        self.model.save(file_path)
-
-    # If modifying the number of models (or training in general), modify this
-    def learn(self, env, total_timesteps, log_interval: int = 4):
-        self.model.set_env(env)
-        self.model.learn(total_timesteps=total_timesteps, log_interval=log_interval)
